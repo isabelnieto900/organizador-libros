@@ -18,7 +18,7 @@ Herramienta para organizar y gestionar archivos PDF de libros, automatizando el 
 
 1. Clonar repositorio:
 ```bash
-git clone https://github.com/usuario/codigo-libros.git
+git clone https://github.com/isabelnieto900/codigo-libros.git
 cd codigo-libros
 ```
 
