@@ -1,0 +1,6 @@
+[server]
+# En WSL no hay navegador de Linux: se abre http://localhost:8501 desde Windows
+headless = true
+
+[browser]
+gatherUsageStats = false

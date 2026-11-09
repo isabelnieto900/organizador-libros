@@ -18,7 +18,10 @@ def obtener_archivos_pdf(carpeta):
         return []
     
     archivos = os.listdir(carpeta)
-    return [f for f in archivos if validar_archivo_pdf(f)]
+    return [
+        f for f in archivos
+        if validar_archivo_pdf(f) and os.path.isfile(os.path.join(carpeta, f))
+    ]
 
 def validar_datos_libro(autor, titulo, año):
     """Valida que los datos del libro sean correctos"""

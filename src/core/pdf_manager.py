@@ -1,80 +1,59 @@
 """
 Gestión de archivos PDF y sus metadatos
 """
-from pypdf import PdfReader, PdfWriter
-from datetime import datetime
 import os
-from ..ui.display import imprimir_error, imprimir_advertencia
-from ..ui.colors import Colores, colorear, negrita
+import shutil
+import tempfile
+from datetime import datetime
+from pypdf import PdfReader, PdfWriter
+from ..utils.text_utils import validar_año
 
-class PDFManager:
-    """Manejador de archivos PDF"""
-    
-    def __init__(self):
-        pass
-    
-    def leer_metadatos(self, ruta):
-        """Lee los metadatos de un archivo PDF"""
-        try:
-            reader = PdfReader(ruta)
-            return reader.metadata or {}
-        except Exception as e:
-            imprimir_error(f"Error al leer metadatos: {e}")
-            return {}
-    
-    def mostrar_metadatos(self, ruta):
-        """Muestra los metadatos del PDF de forma organizada"""
-        try:
-            metadatos = self.leer_metadatos(ruta)
-            
-            print(f"\n{negrita(colorear('📋 METADATOS DEL ARCHIVO', Colores.OKCYAN))}")
-            print(f"{colorear('='*40, Colores.OKCYAN)}")
-            
-            if metadatos:
-                for clave, valor in metadatos.items():
-                    clave_limpia = clave.replace('/', '').replace('_', ' ').title()
-                    print(f"{colorear(f'{clave_limpia:15}', Colores.OKBLUE)}: {valor}")
-            else:
-                imprimir_advertencia("No se encontraron metadatos en el archivo")
-            
-            print(f"{colorear('='*40, Colores.OKCYAN)}\n")
-        except Exception as e:
-            imprimir_error(f"No se pudieron mostrar los metadatos: {e}")
-    
-    def actualizar_metadatos(self, ruta, autor, titulo, año, edicion):
-        """Actualiza los metadatos internos del PDF"""
-        try:
-            reader = PdfReader(ruta)
-            writer = PdfWriter()
-            
-            for page in reader.pages:
-                writer.add_page(page)
-            
-            writer.add_metadata({
-                "/Author": autor,
-                "/Title": titulo,
-                "/Subject": f"Edición: {edicion}" if edicion else "",
-                "/CreationDate": f"D:{año}0101000000",
-                "/ModDate": f"D:{datetime.now().strftime('%Y%m%d%H%M%S')}"
-            })
-            
-            with open(ruta, "wb") as f_out:
-                writer.write(f_out)
-            
-            return True
-        except Exception as e:
-            imprimir_error(f"No se pudieron actualizar los metadatos: {e}")
-            return False
-    
-    def extraer_info_basica(self, ruta):
-        """Extrae información básica del PDF"""
-        from ..utils.text_utils import limpiar_texto, extraer_año_fecha
-        
-        metadatos = self.leer_metadatos(ruta)
-        
-        autor = limpiar_texto(metadatos.get('/Author', ''))
-        titulo = limpiar_texto(metadatos.get('/Title', ''))
-        fecha = limpiar_texto(metadatos.get('/CreationDate', ''))
-        año = extraer_año_fecha(fecha)
-        
-        return autor, titulo, año
+
+class PDFProtegidoError(Exception):
+    """El PDF está cifrado y no se pueden reescribir sus metadatos"""
+
+
+def leer_metadatos(ruta):
+    """Lee los metadatos de un archivo PDF como un diccionario de textos"""
+    metadatos = PdfReader(ruta).metadata
+    if not metadatos:
+        return {}
+    # Indexar (en vez de usar .items()) resuelve las referencias indirectas
+    return {clave: str(metadatos[clave]) for clave in metadatos}
+
+
+def actualizar_metadatos(ruta, autor, titulo, año, edicion=''):
+    """Actualiza los metadatos internos del PDF sin arriesgar el original.
+
+    Se escribe un archivo temporal en la misma carpeta y luego se reemplaza el
+    original de una sola vez: si algo falla a mitad, el libro queda intacto.
+    """
+    reader = PdfReader(ruta)
+    if reader.is_encrypted:
+        raise PDFProtegidoError("El PDF está protegido; no se modificaron sus metadatos")
+
+    # clone_from conserva marcadores, enlaces y el resto de la estructura
+    writer = PdfWriter(clone_from=reader)
+    metadatos = {
+        "/Author": autor,
+        "/Title": titulo,
+        "/ModDate": f"D:{datetime.now().strftime('%Y%m%d%H%M%S')}",
+    }
+    if edicion:
+        metadatos["/Subject"] = f"Edición: {edicion}"
+    if validar_año(año):
+        metadatos["/CreationDate"] = f"D:{año}0101000000"
+    writer.add_metadata(metadatos)
+
+    descriptor, temporal = tempfile.mkstemp(
+        prefix='.organizador-', suffix='.pdf.tmp', dir=os.path.dirname(ruta)
+    )
+    try:
+        with os.fdopen(descriptor, 'wb') as salida:
+            writer.write(salida)
+        shutil.copymode(ruta, temporal)
+        os.replace(temporal, ruta)
+    except BaseException:
+        if os.path.exists(temporal):
+            os.unlink(temporal)
+        raise

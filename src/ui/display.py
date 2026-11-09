@@ -38,6 +38,20 @@ def mostrar_info_archivo(nombre, autor, titulo, año, edicion=None):
     print(f"{Colores.OKBLUE}Edición: {Colores.ENDC}{edicion or f'{Colores.WARNING}NO ESPECIFICADA{Colores.ENDC}'}")
     print(f"{Colores.OKBLUE}Año:     {Colores.ENDC}{año or f'{Colores.FAIL}NO ENCONTRADO{Colores.ENDC}'}")
 
+def mostrar_metadatos(metadatos):
+    """Muestra los metadatos del PDF de forma organizada"""
+    print(f"\n{negrita(colorear('📋 METADATOS DEL ARCHIVO', Colores.OKCYAN))}")
+    print(f"{colorear('='*40, Colores.OKCYAN)}")
+
+    if metadatos:
+        for clave, valor in metadatos.items():
+            clave_limpia = clave.replace('/', '').replace('_', ' ').title()
+            print(f"{colorear(f'{clave_limpia:15}', Colores.OKBLUE)}: {valor}")
+    else:
+        imprimir_advertencia("No se encontraron metadatos en el archivo")
+
+    print(f"{colorear('='*40, Colores.OKCYAN)}\n")
+
 def mostrar_resumen_final(procesados, omitidos):
     """Muestra el resumen final del proceso"""
     print(f"\n{negrita(colorear('📊 RESUMEN FINAL', Colores.HEADER))}")

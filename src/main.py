@@ -1,30 +1,33 @@
 """
-Programa principal del organizador de libros PDF
+Programa principal del organizador de libros PDF (versión de terminal)
 """
 import os
 import sys
-from dotenv import load_dotenv
-
-# Cargar variables de entorno desde .env
-load_dotenv()
 
 # Agregar el directorio raíz al path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from config.settings import CARPETA_LIBROS
-from .core.pdf_manager import PDFManager
-from .core.file_manager import FileManager
+from .core.organizador import (
+    ArchivoExistenteError,
+    aplicar_cambios,
+    leer_libro,
+    leer_metadatos,
+    listar_libros,
+    nombre_alternativo,
+    nombre_ocupado,
+    nombre_propuesto,
+)
 from .ui.display import *
 from .ui.menus import *
-from .utils.validators import obtener_archivos_pdf, validar_carpeta
-from .utils.text_utils import generar_nombre_archivo, limpiar_texto
+from .utils.validators import validar_carpeta
+from .utils.text_utils import limpiar_texto
 
 class OrganizadorLibros:
     """Clase principal del organizador de libros"""
     
-    def __init__(self):
-        self.pdf_manager = PDFManager()
-        self.file_manager = FileManager()
+    def __init__(self, carpeta):
+        self.carpeta = carpeta
         self.archivos_procesados = 0
         self.archivos_omitidos = 0
     
@@ -47,88 +50,131 @@ class OrganizadorLibros:
             if confirmar_accion(f"Campo vacío. ¿Usar 'Desconocido_{campo}'?"):
                 return f'Desconocido_{campo}'
     
-    def procesar_archivo(self, ruta, nombre_archivo):
-        """Procesa un archivo PDF individual"""
+    def editar_datos(self, libro):
+        """Permite corregir los datos del libro (Enter conserva el valor actual)"""
+        libro.autor = input(f"Autor [{libro.autor}]: ").strip() or libro.autor
+        libro.titulo = input(f"Título [{libro.titulo}]: ").strip() or libro.titulo
+        libro.año = input(f"Año [{libro.año}]: ").strip() or libro.año
+        libro.edicion = input(f"Edición [{libro.edicion}]: ").strip() or libro.edicion
+    
+    def ver_metadatos(self, ruta):
+        """Muestra los metadatos del PDF o el error al leerlos"""
         try:
-            # Extraer información básica
-            autor, titulo, año = self.pdf_manager.extraer_info_basica(ruta)
-            edicion = ""
-
-            # Mostrar información del archivo
-            mostrar_info_archivo(nombre_archivo, autor, titulo, año, edicion)
-
-            # Menú principal
-            while True:
-                decision = mostrar_menu_principal()
-
-                if decision == 'o':
+            mostrar_metadatos(leer_metadatos(ruta))
+        except Exception as e:
+            imprimir_error(f"No se pudieron leer los metadatos: {e}")
+    
+    def guardar(self, libro):
+        """Aplica los cambios al libro. Devuelve False si el usuario lo omite"""
+        nombre = nombre_propuesto(libro)
+        while True:
+            if nombre_ocupado(libro, nombre):
+                alternativo = nombre_alternativo(libro, nombre)
+                opcion = mostrar_menu_colision(nombre, alternativo)
+                if opcion == 'a':
+                    nombre = alternativo
+                elif opcion == 'e':
+                    self.editar_datos(libro)
+                    nombre = nombre_propuesto(libro)
+                    continue
+                elif opcion == 'o':
                     imprimir_advertencia("Archivo omitido")
-                    self.archivos_omitidos += 1
-                    return True  # Continúa automáticamente al siguiente archivo
-                elif decision == 'v':
-                    self.pdf_manager.mostrar_metadatos(ruta)
-                elif decision == 'c':
+                    return False
+                else:
+                    imprimir_error("Opción no válida")
+                    continue
+            
+            nombre_anterior = libro.nombre_archivo
+            try:
+                resultado = aplicar_cambios(libro, nombre)
+            except ArchivoExistenteError:
+                continue
+            except Exception as e:
+                imprimir_error(f"No se pudo guardar: {e}")
+                return False
+            
+            if resultado.renombrado:
+                imprimir_exito(f"Renombrado: {nombre_anterior} → {libro.nombre_archivo}")
+            else:
+                imprimir_info("El archivo ya tiene el nombre correcto")
+            
+            if resultado.metadatos_actualizados:
+                imprimir_exito("Metadatos actualizados correctamente")
+            else:
+                imprimir_advertencia(f"Metadatos sin cambios: {resultado.error_metadatos}")
+            return True
+    
+    def procesar_archivo(self, ruta):
+        """Procesa un archivo PDF individual. Devuelve False para salir"""
+        try:
+            libro = leer_libro(ruta)
+        except Exception as e:
+            imprimir_error(f"{os.path.basename(ruta)}: {e}")
+            return True  # Continúa automáticamente al siguiente archivo
+
+        # Mostrar información del archivo
+        mostrar_info_archivo(libro.nombre_archivo, libro.autor, libro.titulo, libro.año, libro.edicion)
+
+        # Menú principal
+        while True:
+            decision = mostrar_menu_principal()
+
+            if decision == 'o':
+                imprimir_advertencia("Archivo omitido")
+                self.archivos_omitidos += 1
+                return True  # Continúa automáticamente al siguiente archivo
+            elif decision == 'v':
+                self.ver_metadatos(libro.ruta)
+            elif decision == 'c':
+                break
+            else:
+                imprimir_error("Opción no válida")
+        
+        # Procesar metadatos
+        if libro.autor and libro.titulo and libro.año:
+            print(f"\n💡 Nombre sugerido: {negrita(nombre_propuesto(libro))}")
+
+            while True:
+                usar = mostrar_menu_metadatos()
+
+                if usar == 'v':
+                    self.ver_metadatos(libro.ruta)
+                elif usar == 'e':
+                    self.editar_datos(libro)
+                    break
+                elif usar == 'n':
+                    libro.autor = self.obtener_datos_faltantes('autor', '', libro.nombre_archivo)
+                    libro.titulo = self.obtener_datos_faltantes('título', '', libro.nombre_archivo)
+                    libro.año = self.obtener_datos_faltantes('año', '', libro.nombre_archivo)
+                    libro.edicion = self.obtener_datos_faltantes('edición', '', libro.nombre_archivo, requerido=False)
+                    break
+                elif usar == 's':
                     break
                 else:
                     imprimir_error("Opción no válida")
-            
-            # Procesar metadatos
-            if autor and titulo and año:
-                sugerido = generar_nombre_archivo(autor, titulo, año)  # Actualiza para incluir edicion si quieres
-                print(f"\n💡 Nombre sugerido: {negrita(sugerido)}")
+        else:
+            imprimir_info("Completando datos faltantes...")
+            libro.autor = self.obtener_datos_faltantes('autor', libro.autor, libro.nombre_archivo)
+            libro.titulo = self.obtener_datos_faltantes('título', libro.titulo, libro.nombre_archivo)
+            libro.año = self.obtener_datos_faltantes('año', libro.año, libro.nombre_archivo)
+            libro.edicion = self.obtener_datos_faltantes('edición', libro.edicion, libro.nombre_archivo, requerido=False)
 
-                while True:
-                    usar = mostrar_menu_metadatos()
+        if not self.guardar(libro):
+            self.archivos_omitidos += 1
+            return True
 
-                    if usar == 'v':
-                        self.pdf_manager.mostrar_metadatos(ruta)
-                    elif usar == 'e':
-                        autor = input(f"Autor [{autor}]: ").strip() or autor
-                        titulo = input(f"Título [{titulo}]: ").strip() or titulo
-                        año = input(f"Año [{año}]: ").strip() or año
-                        edicion = input(f"Edición [{edicion}]: ").strip() or edicion
-                        break
-                    elif usar == 'n':
-                        autor = self.obtener_datos_faltantes('autor', '', nombre_archivo)
-                        titulo = self.obtener_datos_faltantes('título', '', nombre_archivo)
-                        año = self.obtener_datos_faltantes('año', '', nombre_archivo)
-                        edicion = self.obtener_datos_faltantes('edición', '', nombre_archivo, requerido=False)
-                        break
-                    elif usar == 's':
-                        break
-                    else:
-                        imprimir_error("Opción no válida")
-            else:
-                imprimir_info("Completando datos faltantes...")
-                autor = self.obtener_datos_faltantes('autor', autor, nombre_archivo)
-                titulo = self.obtener_datos_faltantes('título', titulo, nombre_archivo)
-                año = self.obtener_datos_faltantes('año', año, nombre_archivo)
-                edicion = self.obtener_datos_faltantes('edición', '', nombre_archivo, requerido=False)
+        self.archivos_procesados += 1
 
-            # Renombrar archivo
-            nuevo_nombre = generar_nombre_archivo(autor, titulo, año, edicion)
-            nueva_ruta = self.file_manager.renombrar_archivo(ruta, nuevo_nombre)
-
-            # Actualizar metadatos
-            if self.pdf_manager.actualizar_metadatos(nueva_ruta, autor, titulo, año, edicion):
-                imprimir_exito("Metadatos actualizados correctamente")
-
-            self.archivos_procesados += 1
-
-            # Menú post-proceso
-            return self.manejar_post_proceso(nueva_ruta, autor, titulo, año, edicion)
-
-        except Exception as e:
-            imprimir_error(f"{nombre_archivo}: {e}")
-            return True  # Continúa automáticamente al siguiente archivo
+        # Menú post-proceso
+        return self.manejar_post_proceso(libro)
     
-    def manejar_post_proceso(self, ruta, autor, titulo, año, edicion):
+    def manejar_post_proceso(self, libro):
         """Maneja las acciones después de procesar un archivo"""
         while True:
             post_accion = mostrar_menu_post_proceso()
             
             if post_accion == 'v':
-                self.pdf_manager.mostrar_metadatos(ruta)
+                self.ver_metadatos(libro.ruta)
             elif post_accion == 'c':
                 return True
             elif post_accion == 's':
@@ -136,32 +182,28 @@ class OrganizadorLibros:
                 return False
             elif post_accion == 'r':
                 print(f"\n📝 Corrigiendo datos...")
-                autor = input(f"Autor [{autor}]: ").strip() or autor
-                titulo = input(f"Título [{titulo}]: ").strip() or titulo
-                año = input(f"Año [{año}]: ").strip() or año
-                edicion = input(f"Edición [{edicion}]: ").strip() or edicion
-
-                nuevo_nombre = generar_nombre_archivo(autor, titulo, año, edicion)
-                nueva_ruta = self.file_manager.renombrar_archivo(ruta, nuevo_nombre)
-
-                if self.pdf_manager.actualizar_metadatos(nueva_ruta, autor, titulo, año, edicion):
-                    imprimir_exito("Metadatos corregidos")
-
-                ruta = nueva_ruta
+                self.editar_datos(libro)
+                if self.guardar(libro):
+                    imprimir_exito("Datos corregidos")
             else:
                 imprimir_error("Opción no válida")
     
     def ejecutar(self):
         """Ejecuta el programa principal"""
-        imprimir_titulo(CARPETA_LIBROS)
+        if not self.carpeta:
+            imprimir_error("No está definida CARPETA_LIBROS.")
+            imprimir_info("Copia .env.example como .env (cp .env.example .env) y pon la ruta de tus libros.")
+            return
+
+        imprimir_titulo(self.carpeta)
         
         # Verificar carpeta
-        if not validar_carpeta(CARPETA_LIBROS):
-            imprimir_error(f"La carpeta no existe: {CARPETA_LIBROS}")
+        if not validar_carpeta(self.carpeta):
+            imprimir_error(f"La carpeta no existe: {self.carpeta}")
             return
         
         # Obtener archivos PDF
-        archivos_pdf = obtener_archivos_pdf(CARPETA_LIBROS)
+        archivos_pdf = listar_libros(self.carpeta)
         
         if not archivos_pdf:
             imprimir_advertencia("No se encontraron archivos PDF en la carpeta")
@@ -171,10 +213,8 @@ class OrganizadorLibros:
         imprimir_separador()
         
         # Procesar archivos
-        for nombre_archivo in archivos_pdf:
-            ruta = os.path.join(CARPETA_LIBROS, nombre_archivo)
-            
-            if not self.procesar_archivo(ruta, nombre_archivo):
+        for ruta in archivos_pdf:
+            if not self.procesar_archivo(ruta):
                 break
             
             imprimir_separador()
@@ -185,9 +225,9 @@ class OrganizadorLibros:
 def main():
     """Función principal"""
     try:
-        organizador = OrganizadorLibros()
+        organizador = OrganizadorLibros(CARPETA_LIBROS)
         organizador.ejecutar()
-    except KeyboardInterrupt:
+    except (KeyboardInterrupt, EOFError):
         print(f"\n\n⚠ Proceso interrumpido por el usuario")
     except Exception as e:
         imprimir_error(f"Error inesperado: {e}")
